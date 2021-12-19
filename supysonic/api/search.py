@@ -6,22 +6,15 @@
 # Distributed under terms of the GNU AGPLv3 license.
 
 from __future__ import unicode_literals
-from flask import current_app
 
-from ..daemon.client import DaemonClient
-from ..daemon.exceptions import DaemonUnavailableError
-from .exceptions import ServerError
-
-import os
-import glob
-import shutil
+import argparse
 import threading as mt
 import subprocess as sp
 
 from os.path import expanduser
 
-from flask import Flask, current_app, request
-from pony.orm import db_session, select
+from flask import request
+from pony.orm import select
 from datetime import datetime
 
 from . import api_routing
@@ -30,6 +23,8 @@ from collections import OrderedDict
 from ..db import Folder, Track, Artist, Album
 from .exceptions import MissingParameter
 
+from supysonic import ytmdl
+
 
 def scan_and_update_DB():
 
@@ -37,11 +32,9 @@ def scan_and_update_DB():
 
 def download_song(query):
     try:
-        import argparse
+
         import youtube_dl
         from ytmusicapi import YTMusic
-        from ytmdl import core, defaults
-        from ytmdl import ytmdl_main
 
     except ImportError as error:
         raise ImportError(error)
@@ -70,7 +63,7 @@ def download_song(query):
                                     quiet=True, skip_meta=False, song=None, spotify_id=None,
                                     title_as_name=False, trim=False, url=song_url)
 
-        ytmdl_main.main(args)
+        ytmdl.main(args)
         scan_and_update_DB()
 
         return True
