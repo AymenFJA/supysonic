@@ -5,16 +5,78 @@
 #
 # Distributed under terms of the GNU AGPLv3 license.
 
-from collections import OrderedDict
-from datetime import datetime
-from flask import request
-from pony.orm import select
+from __future__ import unicode_literals
+from flask import current_app
 
-from ..db import Folder, Track, Artist, Album
+from ..daemon.client import DaemonClient
+from ..daemon.exceptions import DaemonUnavailableError
+from .exceptions import ServerError
+
+import os
+import glob
+import shutil
+import threading as mt
+import subprocess as sp
+
+from os.path import expanduser
+
+from flask import Flask, current_app, request
+from pony.orm import db_session, select
+from datetime import datetime
 
 from . import api_routing
+from collections import OrderedDict
+
+from ..db import Folder, Track, Artist, Album
 from .exceptions import MissingParameter
 
+
+def scan_and_update_DB():
+
+    sp.run(['supysonic-cli folder scan'], shell =True)
+
+def download_song(query):
+    try:
+        import argparse
+        import youtube_dl
+        from ytmusicapi import YTMusic
+        from ytmdl import core, defaults
+        from ytmdl import ytmdl_main
+
+    except ImportError as error:
+        raise ImportError(error)
+    
+    try:
+
+        ytmusic = YTMusic('')
+        search_results = ytmusic.search(query= str(query),
+                                        filter= 'songs')[0]
+        song_id = search_results['videoId']
+        song_title = search_results['title']
+        song_url = "https://music.youtube.com/watch?v={0}".format(song_id)
+
+        args = argparse.Namespace(SONG_NAME=song_title.split(' '),
+                                    album=None, artist=None, ask_meta_name=False,
+                                    choice=1, disable_file=False,
+                                    disable_metaadd=False, disable_sort=False,
+                                    download_archive=None, format='mp3',
+                                    get_opts=False, ignore_chapters=False,
+                                    ignore_errors=False, itunes_id=None,
+                                    keep_chapter_name=False, level='INFO',
+                                    list=None, list_level=False, manual_meta=False,
+                                    nolocal=False, on_meta_error=None, 
+                                    output_dir='/home/aymenalsaadi/Music/',
+                                    pl_end=None, pl_items=None, pl_start=None, proxy=None,
+                                    quiet=True, skip_meta=False, song=None, spotify_id=None,
+                                    title_as_name=False, trim=False, url=song_url)
+
+        ytmdl_main.main(args)
+        scan_and_update_DB()
+
+        return True
+
+    except Exception as error:
+        raise Exception(error)
 
 @api_routing("/search")
 def old_search():
@@ -120,19 +182,28 @@ def new_search():
     )
     songs = Track.select(lambda t: query in t.title).limit(song_count, song_offset)
 
-    return request.formatter(
-        "searchResult2",
-        OrderedDict(
-            (
-                ("artist", [a.as_subsonic_artist(request.user) for a in artists]),
-                ("album", [f.as_subsonic_child(request.user) for f in albums]),
+    if not songs:
+        
+        dw_song = mt.Thread(target=download_song , args=(query,))
+        #dw_song.daemon = True
+        dw_song.start()
+        return request.formatter("searchResult2", 'Not found in the DB, downloading....')
+
+    else:
+            
+        return request.formatter(
+            "searchResult2",
+            OrderedDict(
                 (
-                    "song",
-                    [t.as_subsonic_child(request.user, request.client) for t in songs],
-                ),
-            )
-        ),
-    )
+                    ("artist", [a.as_subsonic_artist(request.user) for a in artists]),
+                    ("album", [f.as_subsonic_child(request.user) for f in albums]),
+                    (
+                        "song",
+                        [t.as_subsonic_child(request.user, request.client) for t in songs],
+                    ),
+                )
+            ),
+        )
 
 
 @api_routing("/search3")
